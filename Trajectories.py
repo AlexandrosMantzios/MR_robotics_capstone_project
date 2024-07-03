@@ -318,7 +318,7 @@ import csv
 import os
 import numpy as np
 import math as m
-import modern_robotics as mr
+import core as mr
 import math
 from Configurations import RobotConfiguration, Parameters, Cube_Task, RobotProperties
 from scipy.spatial.transform import Rotation as Rot

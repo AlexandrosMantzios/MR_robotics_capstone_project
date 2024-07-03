@@ -16,10 +16,12 @@ Includes
 
 @ Alexandros Mantzios
 
+" Test changes for github"
+
 """
 
 import numpy as np 
-import modern_robotics
+import core as mr 
 
 
 

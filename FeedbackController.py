@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import sys
 import os
 import numpy as np
-import modern_robotics as mr
+import core as mr
 from math import cos, sin, fabs, copysign
 from Configurations import RobotConfiguration, RobotProperties, Cube_Task, Parameters
 from numpy.linalg import inv
