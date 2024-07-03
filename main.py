@@ -30,7 +30,7 @@ import Configurations  # Custom configurations module
 from Configurations import RobotConfiguration, RobotProperties, Cube_Task, Parameters  # Import specific classes from Configurations
 import csv  # CSV file operations
 from Trajectories import TrajectoryPlanner  # Custom module for trajectory planning
-import modern_robotics as mr  # Modern Robotics library
+import core as mr  # Modern Robotics library
 from tqdm import tqdm  # Progress bar for loops
 import datetime  # Date and time functions
 
