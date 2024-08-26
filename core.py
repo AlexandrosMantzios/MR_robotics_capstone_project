@@ -14,7 +14,7 @@ Required library: numpy
 Optional library: matplotlib
 ***************************************************************************
 '''
-"""Github changes """
+"""Github changes - Removal of comments for v4.0"""
 '''
 *** IMPORTS ***
 '''
