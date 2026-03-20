@@ -1,342 +1,204 @@
 """
 30-05-2024
 Capstone Project - Modern robotics
-Trajectories.py : Module to compute the trajectory segments between T_initial 
-and T_goal. Creates trajectory and stores values. 
+Trajectories.py : Module to compute the trajectory segments between T_initial
+and T_goal. Creates trajectory and stores values.
 
 @ Alexandros Mantzios
-
 """
-# New version 
-    
-# Import necessary modules and classes
-import csv
-import os
+
 import numpy as np
-import math as m
-import core as mr
 import math
-from Configurations import RobotConfiguration, Parameters, Cube_Task, RobotProperties
-from scipy.spatial.transform import Rotation as Rot
+import core as mr
+from Configurations import Parameters
 
-# Set parameters from imported modules
+
+# Time scaling for trajectory polynomials (Cubic=3, Quintic=5)
 time_scale = Parameters.time_scale
-trajectory_type = Parameters.trajectory_type
-cube_task = Cube_Task
-# Initial cube configuration - best and overshoot
-Tsc_init = Cube_Task.Tsc_init()
 
-# # Initial cube configuration - newtask
-# Tsc_init = Cube_Task.Tsc_init_new()
-
-
-# Initial end effector (EE) robot configuration 
-Tse_init = RobotProperties.Tse_init()
-
-# Goal cube task configuration - Uncomment for best and overshoot tasks
-Tsc_goal = Cube_Task.Tsc_goal()
-
-# # Goal cube task configuration - Uncomment for newtask task 
-# Tsc_goal = Cube_Task.Tsc_goal_new()
-
-# Pre-pick EE configuration 
-Tce_stand = Cube_Task.Tce_standoff()
-
-# Pick EE configuration 
-Tce_grip = Cube_Task.Tce_grip()
-
-# k parameter 
-k = Parameters.k()
-
-# Maximum velocities
-max_linear_velocity = Parameters.max_linear_velocity
-max_angular_velocity = Parameters.max_angular_velocity
 
 class TrajectoryPlanner():
     """
-    Class TrajectoryPlanner to contain methods for calculating trajectories
+    Class TrajectoryPlanner to contain methods for calculating trajectories.
+    Generates 8-segment pick-and-place trajectories.
     """
 
-    def gen_data_row(conf_mat, grip_state):  
-        """
-        Function to generate the rows of the csv files
-        Inputs : 
-        - conf_mat : Configuration matrix
-        - grip_state : Gripper state
-        Outputs : 
-        - data_row : Combination of configuration and gripper state 
-        """
-        rot = conf_mat[:-1, 0:-1].flatten()  # Flatten the rotation part of the configuration matrix
-        pos = conf_mat[:-1, -1:].flatten()   # Flatten the position part of the configuration matrix
-
-        data_row = np.concatenate((rot, pos, grip_state), axis=None)  # Concatenate rotation, position, and gripper state
-        data_row = data_row.tolist()  # Convert the data row to a list
-        return data_row  # Return the data row
-
-    def write_csv_row(conf_mat, grip_state):  
-        """
-        Function to write configuration to CSV 
-        Inputs:
-        - conf_mat : Configuration matrix
-        - grip_state : Gripper state (boolean)
-        """
-        data_row = TrajectoryPlanner.gen_data_row(conf_mat, grip_state)  # Generate data row
-        current_dir = os.getcwd()  # Get the current directory
-        folder_name = "test_alex"  # Define the folder name
-        folder_path = os.path.join(current_dir, folder_name)  # Create the folder path
-
-        # Create the folder if it doesn't exist
-        if not os.path.exists(folder_path):
-            os.makedirs(folder_path)
-            print(f"Folder '{folder_name}' created at: {folder_path}")
-        
-        filename = os.path.join(folder_path, 'trajectory_new_test.csv')  # Create the filename path
-        print(f"Writing data to file: {filename}")
-
-        with open(filename, 'a', newline='') as f:  # Open the CSV file in append mode
-            csv_writer = csv.writer(f)  # Create a CSV writer object
-            csv_writer.writerow(data_row)  # Write the data row to the CSV file
-            print("Data written to file successfully!")
-
-    def write_trajectory_to_csv(traj_list, gripper_state):
-        """
-        Function to write trajectory to CSV
-        Inputs:
-        - traj_list : List of trajectory configurations
-        - gripper_state : Gripper state
-        """
-        for conf in traj_list:  # Iterate through the trajectory list
-            TrajectoryPlanner.write_csv_row(conf, gripper_state)  # Write each configuration to CSV
-
+    @staticmethod
     def gripper_status(configuration, k):
         """
-        Function to get gripper status and add it to trajectory list
+        Function to get gripper status and add it to trajectory list.
+        Holds the given configuration for 0.5 seconds.
         Inputs:
-        - configuration : Configuration matrix
+        - configuration : Configuration matrix (4x4 SE(3))
         - k : Scaling factor
-        Outputs : 
-        - trajectory_list : List of configurations with gripper status
+        Outputs :
+        - trajectory_list : List of repeated configurations
         """
-        Tf = 0.5  # 0.5 seconds to close the gripper
+        Tf = 0.5  # 0.5 seconds to close/open the gripper
         N = int(Tf * k / 0.01)  # Calculate the number of configurations
-        trajectory_list = [configuration] * N  # Create a list of configurations
-        return trajectory_list  # Return the trajectory list
+        trajectory_list = [configuration] * N
+        return trajectory_list
 
-    def trajectory_generator(pos1, pos2):
+    @staticmethod
+    def rotation_matrix_to_euler_angles(Rot_matrix):
         """
-        Function to calculate Euclidean distance between two positions
-        Inputs: 
-        - pos1 : Start position
-        - pos2 : End position
-        Outputs:
-        - distance : Distance between positions
-        """
-        distance = np.linalg.norm(pos1 - pos2)  # Calculate Euclidean distance
-        return distance  # Return the distance
-
-    def extract_position_vector(frame):
-        """
-        Function to extract position vector 
+        Convert rotation matrix to Euler angles (alpha, beta, gamma).
         Inputs:
-        - frame : Homogeneous transformation matrix
+        - Rot_matrix : 3x3 rotation matrix
         Outputs:
-        - position_vector : Extracted position vector
+        - Euler angles [alpha, beta, gamma] as numpy array
         """
-        return frame[:-1, -1:].flatten()  # Extract and flatten the position vector
+        beta = np.arcsin(-np.clip(Rot_matrix[2, 0], -1.0, 1.0))  # Compute beta angle
+        if np.abs(Rot_matrix[2, 0]) < 0.99999:  # Singularity avoidance
+            alpha = np.arctan2(Rot_matrix[1, 0], Rot_matrix[0, 0])
+            gamma = np.arctan2(Rot_matrix[2, 1], Rot_matrix[2, 2])
+        else:
+            alpha = 0.0
+            gamma = np.arctan2(-Rot_matrix[0, 1], Rot_matrix[1, 1])
+        return np.array([alpha, beta, gamma], dtype=float)
 
-    def calculate_trajectory_parameters(pos_start, pos_end, max_velocity, k):
+    @staticmethod
+    def Trajectory(T_ini, T_goal, max_v, max_omega, k, trajectory_type):
         """
-        Function to calculate trajectory parameters
+        Function to get trajectory list between two SE(3) poses.
+        Duration is determined by whichever is slower: linear or angular motion.
         Inputs:
-        - pos_start : Start position
-        - pos_end : Goal position
-        - max_velocity : Maximum velocity
+        - T_ini : Initial configuration (4x4 SE(3))
+        - T_goal : End configuration (4x4 SE(3))
+        - max_v : Maximum linear velocity
+        - max_omega : Maximum angular velocity
         - k : Scaling factor
+        - trajectory_type : "CartesianTrajectory" or "ScrewTrajectory"
         Outputs:
-        - Tf : Duration of trajectory
-        - No_conf : Number of configurations
+        - trajectory_list : List of 4x4 SE(3) configurations
         """
-        pos1 = TrajectoryPlanner.extract_position_vector(pos_start)  # Extract start position vector
-        pos2 = TrajectoryPlanner.extract_position_vector(pos_end)  # Extract end position vector
-
-        d = TrajectoryPlanner.trajectory_generator(pos1, pos2)  # Calculate distance
-        Tf = round(d / max_velocity, 3)  # Calculate duration of trajectory
-        No_conf = Tf * k / 0.01  # Calculate number of configurations
-        return Tf, No_conf  # Return duration and number of configurations
-
-    def Trajectory(T_ini, T_goal, max_v, k, trajectory_type):  
-        """
-        Function to get trajectory list
-        Inputs: 
-        - T_ini : Initial configuration
-        - T_goal : End configuration
-        - max_v : Maximum velocity
-        - k : Scaling factor
-        - trajectory_type : Type of trajectory
-        Outputs:
-        - trajectory_list : List of configurations in the trajectory
-        """
-        Tf, No_conf = TrajectoryPlanner.calculate_trajectory_parameters(T_ini, T_goal, max_v, k)  # Calculate trajectory parameters
-
-        T_diff = np.dot(mr.TransInv(T_ini), T_goal)  # Compute difference between initial and goal configurations
-        angles_change = max(TrajectoryPlanner.rotation_matrix_to_euler_angles(T_diff[:-1, :-1]))  # Compute angles change
-        Distance = math.hypot(T_diff[0, -1], T_diff[1, -1])  # Compute linear distance to cover
-        Duration = max(Distance / max_linear_velocity, angles_change / max_angular_velocity)  # Compute duration of move
-        No_config = int((Duration * k) / 0.01)  # Calculate number of configurations
+        # Compute relative transform
+        T_diff = np.dot(mr.TransInv(T_ini), T_goal)
+        # Compute angular change
+        angles_change = np.max(np.abs(TrajectoryPlanner.rotation_matrix_to_euler_angles(T_diff[:-1, :-1])))
+        # Compute linear distance
+        Distance = math.hypot(T_diff[0, -1], T_diff[1, -1])
+        # Duration is max of linear and angular time, minimum 0.01s
+        Tf = max(Distance / max_v, angles_change / max_omega, 0.01)
+        # Number of configurations, minimum 2
+        No_conf = max(int((Tf * k) / 0.01), 2)
 
         # Generate trajectory based on type
         if trajectory_type == "CartesianTrajectory":
             trajectory_list = mr.CartesianTrajectory(T_ini, T_goal, Tf, No_conf, time_scale)
         elif trajectory_type == "ScrewTrajectory":
             trajectory_list = mr.ScrewTrajectory(T_ini, T_goal, Tf, No_conf, time_scale)
-        return trajectory_list  # Return the trajectory list
+        return trajectory_list
 
-    def rotation_matrix_to_euler_angles(Rot_matrix):
-        """
-        Convert rotation matrix to Euler angles (alpha, beta, gamma).
-        Inputs:
-        - Rot_matrix : Input rotation matrix
-        Outputs:
-        - Euler angles [alpha, beta, gamma]
-        """
-        beta = np.arcsin(-np.clip(Rot_matrix[2, 0], -1.0, 1.0))  # Compute the beta angle
-        if np.abs(Rot_matrix[2, 0]) < 0.99999:  # Check singularity avoidance condition 
-            alpha = np.arctan2(Rot_matrix[1, 0], Rot_matrix[0, 0])  # Compute alpha angle
-            gamma = np.arctan2(Rot_matrix[2, 1], Rot_matrix[2, 2])   # Compute gamma angle
-        else:
-            alpha = 0.0  # Set alpha angle to 0
-            gamma = np.arctan2(-Rot_matrix[0, 1], Rot_matrix[1, 1])  # Compute gamma angle
-        return np.array([alpha, beta, gamma], dtype=float)  # Return Euler angles as numpy array
-    
     @staticmethod
-    def pre_processing(Tsc_init, Tsc_goal, Tse_init, max_velocity, k):
+    def pre_processing(Tsc_init, Tsc_goal, Tce_stand, Tce_grip):
         """
-        Pre-processing step to calculate initial and goal configurations
+        Pre-processing step to calculate intermediate waypoint poses
+        by combining cube poses with gripper offsets.
         Inputs:
-        - Tsc_init : Initial cube configuration
-        - Tsc_goal : Goal cube configuration
-        - Tse_init : Initial end effector configuration
-        - max_velocity : Maximum velocity
-        - k : Scaling factor
+        - Tsc_init : Initial cube configuration in {s}
+        - Tsc_goal : Goal cube configuration in {s}
+        - Tce_stand : EE standoff pose relative to cube
+        - Tce_grip : EE grip pose relative to cube
         Outputs:
-        - Tse_init_standoff : Pre-pick EE configuration
-        - Tse_init_grip : Pick EE configuration
-        - Tse_goal_standoff : Pre-place EE configuration
-        - Tse_goal_grip : Place EE configuration
+        - Tse_init_standoff : Pre-pick EE configuration (hover above pick)
+        - Tse_init_grip : Pick EE configuration (at cube)
+        - Tse_goal_standoff : Pre-place EE configuration (hover above place)
+        - Tse_goal_grip : Place EE configuration (at goal)
         """
-        Tse_init_standoff = np.dot(Tsc_init, Tce_stand)  # Calculate initial standoff configuration
-        Tse_init_grip = np.dot(Tsc_init, Tce_grip)  # Calculate initial grip configuration
-        Tse_goal_standoff = np.dot(Tsc_goal, Tce_stand)  # Calculate goal standoff configuration
-        Tse_goal_grip = np.dot(Tsc_goal, Tce_grip)  # Calculate goal grip configuration
+        Tse_init_standoff = np.dot(Tsc_init, Tce_stand)
+        Tse_init_grip = np.dot(Tsc_init, Tce_grip)
+        Tse_goal_standoff = np.dot(Tsc_goal, Tce_stand)
+        Tse_goal_grip = np.dot(Tsc_goal, Tce_grip)
+        return Tse_init_standoff, Tse_init_grip, Tse_goal_standoff, Tse_goal_grip
 
-        return Tse_init_standoff, Tse_init_grip, Tse_goal_standoff, Tse_goal_grip  # Return configurations
-
-    def Full_trajectory(Tsc_init, Tsc_goal, Tse_init, k, max_velocity):
+    @staticmethod
+    def Full_trajectory(Tsc_init, Tsc_goal, Tse_init, Tce_stand, Tce_grip,
+                        k, max_velocity, max_angular_velocity):
         """
-        Function to get full trajectory comprising of all segments
+        Function to get full trajectory comprising of all 8 segments:
+        1. Home → pre-pick standoff (gripper open)
+        2. Pre-pick standoff → grip pose (gripper open)
+        3. Close gripper (hold 0.5s)
+        4. Grip pose → pre-pick standoff (gripper closed)
+        5. Pre-pick standoff → pre-place standoff (gripper closed)
+        6. Pre-place standoff → place pose (gripper closed)
+        7. Open gripper (hold 0.5s)
+        8. Place pose → pre-place standoff (gripper open)
+
         Inputs:
-        - Tsc_init : Initial cube configuration
-        - Tsc_goal : Goal cube configuration
-        - Tse_init : Initial end effector configuration
+        - Tsc_init : Initial cube configuration in {s}
+        - Tsc_goal : Goal cube configuration in {s}
+        - Tse_init : Initial end effector configuration in {s}
+        - Tce_stand : EE standoff pose relative to cube
+        - Tce_grip : EE grip pose relative to cube
         - k : Scaling factor
-        - max_velocity : Maximum velocity
+        - max_velocity : Maximum linear velocity
+        - max_angular_velocity : Maximum angular velocity
         Outputs:
-        - Full_trajectory_list : List of all configurations
-        - Full_gripper_state : List of gripper states
+        - Full_trajectory_list : List of 8 trajectory segments
+        - Full_gripper_state : List of 8 gripper states (0=open, 1=closed)
         """
-        Full_trajectory_list = []  # Initialize full trajectory list
-        Full_gripper_state = []  # Initialize full gripper state list
-        rob_prop = RobotProperties  # Alias for RobotProperties
-        trajectory_type = Parameters.trajectory_type  # Get trajectory type
+        Full_trajectory_list = []
+        Full_gripper_state = []
+        trajectory_type = Parameters.trajectory_type
+        max_v = max_velocity
+        max_omega = max_angular_velocity
 
-        # Define initial end effector configuration
-        Tse_init = np.array([[0,0,1,0],
-                             [0,1,0,0],
-                             [-1,0,0,0.5],
-                             [0,0,0,1]])
-        # Calculate necessary configurations
-        Tse_init_standoff, Tse_init_grip, Tse_goal_standoff, Tse_goal_grip = TrajectoryPlanner.pre_processing(Tsc_init, Tsc_goal, Tse_init, max_velocity, k)
+        # Calculate necessary waypoint configurations
+        Tse_init_standoff, Tse_init_grip, Tse_goal_standoff, Tse_goal_grip = \
+            TrajectoryPlanner.pre_processing(Tsc_init, Tsc_goal, Tce_stand, Tce_grip)
 
-        # Add initial to pre-grip trajectory
+        # Segment 1: Home → pre-pick standoff (gripper open)
         T_init = Tse_init
         T_goal = Tse_init_standoff
-        Trajectory_list = TrajectoryPlanner.Trajectory(T_init, T_goal, max_velocity, k, trajectory_type)
+        Trajectory_list = TrajectoryPlanner.Trajectory(T_init, T_goal, max_v, max_omega, k, trajectory_type)
         Full_trajectory_list.append(Trajectory_list)
-        gripper_state = 0  # Gripper open
-        Full_gripper_state.append(gripper_state)
+        Full_gripper_state.append(0)  # Gripper open
 
-        # Add move to grip configuration
+        # Segment 2: Move to grip configuration (gripper open)
         T_init = T_goal
         T_goal = Tse_init_grip
-        Trajectory_list = TrajectoryPlanner.Trajectory(T_init, T_goal, max_velocity, k, trajectory_type)
+        Trajectory_list = TrajectoryPlanner.Trajectory(T_init, T_goal, max_v, max_omega, k, trajectory_type)
         Full_trajectory_list.append(Trajectory_list)
-        gripper_state = 0  # Gripper open
-        Full_gripper_state.append(gripper_state)
+        Full_gripper_state.append(0)  # Gripper open
 
-        # Add close gripper configuration
+        # Segment 3: Close gripper (hold position)
         Trajectory_list = TrajectoryPlanner.gripper_status(T_goal, k)
         Full_trajectory_list.append(Trajectory_list)
-        gripper_state = 1  # Gripper closed
-        Full_gripper_state.append(gripper_state)
+        Full_gripper_state.append(1)  # Gripper closed
 
-        # Add move back to pre-grip configuration
+        # Segment 4: Move back to pre-pick standoff (gripper closed)
         T_init = T_goal
         T_goal = Tse_init_standoff
-        Trajectory_list = TrajectoryPlanner.Trajectory(T_init, T_goal, max_velocity, k, trajectory_type)
+        Trajectory_list = TrajectoryPlanner.Trajectory(T_init, T_goal, max_v, max_omega, k, trajectory_type)
         Full_trajectory_list.append(Trajectory_list)
-        gripper_state = 1  # Gripper closed
-        Full_gripper_state.append(gripper_state)
+        Full_gripper_state.append(1)  # Gripper closed
 
-        # Add move to desired pre-place configuration
+        # Segment 5: Move to pre-place standoff (gripper closed)
         T_init = T_goal
         T_goal = Tse_goal_standoff
-        Trajectory_list = TrajectoryPlanner.Trajectory(T_init, T_goal, max_velocity, k, trajectory_type)
+        Trajectory_list = TrajectoryPlanner.Trajectory(T_init, T_goal, max_v, max_omega, k, trajectory_type)
         Full_trajectory_list.append(Trajectory_list)
-        gripper_state = 1  # Gripper closed
-        Full_gripper_state.append(gripper_state)
+        Full_gripper_state.append(1)  # Gripper closed
 
-        # Add move to place position
+        # Segment 6: Move to place position (gripper closed)
         T_init = T_goal
         T_goal = Tse_goal_grip
-        Trajectory_list = TrajectoryPlanner.Trajectory(T_init, T_goal, max_velocity, k, trajectory_type)
+        Trajectory_list = TrajectoryPlanner.Trajectory(T_init, T_goal, max_v, max_omega, k, trajectory_type)
         Full_trajectory_list.append(Trajectory_list)
-        gripper_state = 1  # Gripper closed
-        Full_gripper_state.append(gripper_state)
+        Full_gripper_state.append(1)  # Gripper closed
 
-        # Add open gripper configuration
+        # Segment 7: Open gripper (hold position)
         Trajectory_list = TrajectoryPlanner.gripper_status(T_goal, k)
         Full_trajectory_list.append(Trajectory_list)
-        gripper_state = 0  # Gripper open
-        Full_gripper_state.append(gripper_state)
+        Full_gripper_state.append(0)  # Gripper open
 
-        # Add move to desired pre-place configuration
+        # Segment 8: Move back to pre-place standoff (gripper open)
         T_init = T_goal
         T_goal = Tse_goal_standoff
-        Trajectory_list = TrajectoryPlanner.Trajectory(T_init, T_goal, max_velocity, k, trajectory_type)
+        Trajectory_list = TrajectoryPlanner.Trajectory(T_init, T_goal, max_v, max_omega, k, trajectory_type)
         Full_trajectory_list.append(Trajectory_list)
-        gripper_state = 0  # Gripper open
-        Full_gripper_state.append(gripper_state)
+        Full_gripper_state.append(0)  # Gripper open
 
-        return Full_trajectory_list, Full_gripper_state  # Return full trajectory and gripper state lists
-    
-
-
-
-    
-
-
-
-
-
-
-
-
-        
-
-    
-
-
-
-
-
-  
+        return Full_trajectory_list, Full_gripper_state
